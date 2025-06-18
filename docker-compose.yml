@@ -1,5 +1,13 @@
 
 services:
+  redis:
+    image: redis:7
+    container_name: redis
+    ports:
+      - "6379:6379"
+    networks:
+      - lakehouse-net
+
 
   cassandra:
     image: cassandra:4
@@ -62,6 +70,8 @@ services:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@host.docker.internal:5432/airflow
       AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "True"
+      _PIP_ADDITIONAL_REQUIREMENTS: minio==7.1.11
+      AIRFLOW__WEBSERVER__SECRET_KEY: supersecretkey
     ports:
       - "8080:8080"
     volumes:
@@ -77,11 +87,61 @@ services:
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@host.docker.internal:5432/airflow
+      _PIP_ADDITIONAL_REQUIREMENTS: minio==7.1.11
+      AIRFLOW__WEBSERVER__SECRET_KEY: supersecretkey
     volumes:
       - ./dags:/opt/airflow/dags
     command: scheduler
     networks:
       - lakehouse-net
+
+  airflow-worker-bronze:
+    image: apache/airflow:2.9.1-python3.10
+    restart: always
+    depends_on:
+      - airflow-webserver
+      - airflow-scheduler
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
+      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - _PIP_ADDITIONAL_REQUIREMENTS=minio==7.1.11
+      - AIRFLOW__WEBSERVER__SECRET_KEY=supersecretkey
+    volumes:
+      - ./dags:/opt/airflow/dags
+    command: airflow celery worker --queue bronze
+  
+  airflow-worker-silver:
+    image: apache/airflow:2.9.1-python3.10
+    restart: always
+    depends_on:
+      - airflow-webserver
+      - airflow-scheduler
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
+      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - _PIP_ADDITIONAL_REQUIREMENTS= minio==7.1.11
+      - AIRFLOW__WEBSERVER__SECRET_KEY=supersecretkey
+    volumes:
+      - ./dags:/opt/airflow/dags
+    command: airflow celery worker --queue silver
+
+  airflow-worker-gold:
+    image: apache/airflow:2.9.1-python3.10
+    restart: always
+    depends_on:
+      - airflow-webserver
+      - airflow-scheduler
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
+      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - _PIP_ADDITIONAL_REQUIREMENTS= minio==7.1.11
+      - AIRFLOW__WEBSERVER__SECRET_KEY=supersecretkey
+    volumes:
+      - ./dags:/opt/airflow/dags
+    command: airflow celery worker --queue gold
 
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
@@ -108,51 +168,6 @@ services:
       - zookeeper
     networks:
       - lakehouse-net
-
-  airflow-worker-bronze:
-    image: apache/airflow:2.8.1-python3.10
-    restart: always
-    depends_on:
-      - airflow-webserver
-      - airflow-scheduler
-    environment:
-      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
-      - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
-      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql+psycopg2://airflow:airflow@postgres/airflow
-    volumes:
-      - ./dags:/opt/airflow/dags
-      - ./requirements.txt:/requirements.txt
-    command: bash -c "pip install -r /requirements.txt && airflow celery worker --queue bronze"
-  
-  airflow-worker-silver:
-    image: apache/airflow:2.8.1-python3.10
-    restart: always
-    depends_on:
-      - airflow-webserver
-      - airflow-scheduler
-    environment:
-      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
-      - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
-      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql+psycopg2://airflow:airflow@postgres/airflow
-    volumes:
-      - ./dags:/opt/airflow/dags
-      - ./requirements.txt:/requirements.txt
-    command: bash -c "pip install -r /requirements.txt && airflow celery worker --queue silver"
-
-  airflow-worker-gold:
-    image: apache/airflow:2.8.1-python3.10
-    restart: always
-    depends_on:
-      - airflow-webserver
-      - airflow-scheduler
-    environment:
-      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
-      - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
-      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql+psycopg2://airflow:airflow@postgres/airflow
-    volumes:
-      - ./dags:/opt/airflow/dags
-      - ./requirements.txt:/requirements.txt
-    command: bash -c "pip install -r /requirements.txt && airflow celery worker --queue gold"
 
 volumes:
   cassandradata:
