@@ -13,9 +13,12 @@ import json
 # Função de transformação
 def transform_and_store_parquet(**context):
     execution_date = context["ds"]
+    ano = execution_date[:4]  # yyyy
+    mes = execution_date[5:7]  # mm
+    dia = execution_date[8:10]  # dd
     bucket = "lakehouse"
-    bronze_path = f"bronze/usuarios/dt={execution_date}/usuarios.json"
-    silver_path = f"silver/usuarios/dt={execution_date}/usuarios.parquet"
+    bronze_path = f"bronze/usuarios/ano={ano}/mes={mes}/dia={dia}/usuarios.json"
+    silver_path = f"silver/usuarios/ano={ano}/mes={mes}/dia={dia}/usuarios.parquet"
 
     # MinIO
     client = Minio(
@@ -56,20 +59,9 @@ with DAG(
     tags=["silver"],
 ) as dag:
 
-    espera_bronze = ExternalTaskSensor(
-        task_id="espera_bronze_usuarios",
-        external_dag_id="usuarios_bronze",
-        external_task_id="fetch_api_and_save_to_bronze",
-        mode="poke",
-        timeout=600,
-        poke_interval=30,
-    )
-
     transforma_silver = PythonOperator(
         task_id="transforma_json_para_parquet",
         python_callable=transform_and_store_parquet,
         provide_context=True,
         queue="silver"
     )
-
-    espera_bronze >> transforma_silver

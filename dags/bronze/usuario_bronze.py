@@ -7,13 +7,17 @@ import os
 import json
 from minio import Minio
 from io import BytesIO
+from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 
 # Função de ingestão
 def fetch_and_store_json(**context):
 
     execution_date = context["ds"]  # yyyy-mm-dd
+    ano = execution_date[:4]  # yyyy
+    mes = execution_date[5:7]  # mm
+    dia = execution_date[8:10]  # dd
     bucket = "lakehouse"
-    object_path = f"bronze/usuarios/dt={execution_date}/usuarios.json"
+    object_path = f"bronze/usuarios/ano={ano}/mes={mes}/dia={dia}/usuarios.json"
 
 
     url = "https://jsonplaceholder.typicode.com/users"
@@ -57,5 +61,13 @@ with DAG(
         task_id="fetch_api_and_save_to_bronze",
         python_callable=fetch_and_store_json,
         provide_context=True,
-        queue="bronze",  # Define a fila para a tarefa
+        queue="bronze",
     )
+
+    trigger_silver = TriggerDagRunOperator(
+        task_id="trigger_usuarios_silver",
+        trigger_dag_id="usuarios_silver",
+        wait_for_completion=False,  # Não espera o fim da silver
+    )
+
+    fetch_and_store >> trigger_silver
