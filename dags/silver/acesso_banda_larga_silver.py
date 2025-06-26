@@ -68,7 +68,7 @@ def process_csv_minio_to_silver(**context):
         df["Velocidade"] = df["Velocidade"].astype(str).str.replace(',', '.').astype(float)
         df["Acessos"] = df["Acessos"].astype(str).str.replace(',', '.').astype(float)
         # Filtra empresas
-        empresas_validas = ["TIM", "OI", "VIVO", "CLARO", "ALGAR (CTBC TELECOM)"]
+        empresas_validas = ["TIM", "VIVO", "CLARO", "ALGAR (CTBC TELECOM)"]
         df = df[df["Empresa"].isin(empresas_validas)]
 
         # Renomeia 'ALGAR (CTBC TELECOM)' para 'ALGAR'
