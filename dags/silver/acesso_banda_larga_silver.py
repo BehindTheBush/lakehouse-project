@@ -27,6 +27,21 @@ def faixa_velocidade(v):
     else:
         return "Ultra"
 
+def faixa_velocidade_numerica(v):
+    if pd.isna(v):
+        return None
+    try:
+        v = float(v)
+    except:
+        return None
+    if v <= 30:
+        return 1
+    elif 31 <= v <= 100:
+        return 2
+    elif 101 <= v <= 300:
+        return 3
+    else:
+        return 4
 
 
 def process_csv_minio_to_silver(**context):
@@ -76,6 +91,7 @@ def process_csv_minio_to_silver(**context):
         
         # Cria coluna 'Tipo de Uso'
         df["Tipo de Uso"] = df["Velocidade"].apply(faixa_velocidade)
+        df["Ordem Tipo de Uso"] = df["Velocidade"].apply(faixa_velocidade_numerica)
         dfs.append(df)
 
 

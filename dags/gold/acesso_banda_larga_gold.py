@@ -46,12 +46,12 @@ def aggregate_silver_to_gold(**context):
 
     df_all = pd.concat(dfs, ignore_index=True)
 
-    # Agrupa pelos campos solicitados e soma 'Acessos'
+    # Agrupa pelos campos solicitados e soma 'Acessos' e 'Velocidade'
     grouped = df_all.groupby(
-        ["Ano", "Mês", "Empresa", "Tipo de Uso", "Meio de Acesso", "Código IBGE Município"],
+        ["Ano", "Mês", "Empresa", "Tipo de Uso", "Meio de Acesso", "Código IBGE Município", "Ordem Tipo de Uso"],
         as_index=False,
         dropna=False
-    ).agg({"Acessos": "sum"})
+    ).agg({"Acessos": "sum", "Velocidade": "sum"})
 
     # Converte para pyarrow Table
     table_gold = pa.Table.from_pandas(grouped)
