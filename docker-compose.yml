@@ -1,5 +1,25 @@
 
 services:
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    restart: always
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - lakehouse-net
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+
   redis:
     image: redis:7
     container_name: redis
@@ -48,8 +68,10 @@ services:
       image: apache/airflow:2.9.1-python3.10
       container_name: airflow-init
       environment:
-        AIRFLOW__CORE__EXECUTOR: LocalExecutor
-        AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@host.docker.internal:5432/airflow
+        AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+        AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+        AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
+        AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres:5432/airflow
       volumes:
         - ./dags:/opt/airflow/dags
       entrypoint: >
@@ -58,7 +80,10 @@ services:
           airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com
         "
       depends_on:
-        - dremio
+        postgres:
+          condition: service_healthy
+        redis:
+          condition: service_started
       networks:
         - lakehouse-net
 
@@ -68,16 +93,24 @@ services:
     container_name: airflow-webserver
     restart: always
     environment:
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@host.docker.internal:5432/airflow
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+      AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres:5432/airflow
       AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "True"
-      _PIP_ADDITIONAL_REQUIREMENTS: minio==7.1.11
       AIRFLOW__WEBSERVER__SECRET_KEY: supersecretkey
     ports:
       - "8080:8080"
     volumes:
       - ./dags:/opt/airflow/dags
     command: webserver
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      airflow-init:
+        condition: service_completed_successfully
     networks:
       - lakehouse-net
 
@@ -87,62 +120,92 @@ services:
     container_name: airflow-scheduler
     restart: always
     environment:
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@host.docker.internal:5432/airflow
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+      AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres:5432/airflow
       AIRFLOW__WEBSERVER__SECRET_KEY: supersecretkey
     volumes:
       - ./dags:/opt/airflow/dags
     command: scheduler
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      airflow-init:
+        condition: service_completed_successfully
     networks:
       - lakehouse-net
 
-  airflow-worker-bronze:
+  airflow-worker-bronze-2:
     build: 
       context: ./infra/airflow
     restart: always
     depends_on:
-      - airflow-webserver
-      - airflow-scheduler
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      airflow-scheduler:
+        condition: service_started
     environment:
       - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
       - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
-      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://airflow:airflow@postgres:5432/airflow
       - AIRFLOW__WEBSERVER__SECRET_KEY=supersecretkey
     volumes:
       - ./dags:/opt/airflow/dags
     command: airflow celery worker --queue bronze
+    networks:
+      - lakehouse-net
   
-  airflow-worker-silver:
+  airflow-worker-silver-2:
     build: 
       context: ./infra/airflow
     restart: always
     depends_on:
-      - airflow-webserver
-      - airflow-scheduler
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      airflow-scheduler:
+        condition: service_started
     environment:
       - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
       - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
-      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://airflow:airflow@postgres:5432/airflow
       - AIRFLOW__WEBSERVER__SECRET_KEY=supersecretkey
     volumes:
       - ./dags:/opt/airflow/dags
     command: airflow celery worker --queue silver
+    networks:
+      - lakehouse-net
 
-  airflow-worker-gold:
+  airflow-worker-gold-2:
     build: 
       context: ./infra/airflow
     restart: always
     depends_on:
-      - airflow-webserver
-      - airflow-scheduler
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      airflow-scheduler:
+        condition: service_started
     environment:
       - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
       - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
-      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://airflow:airflow@postgres:5432/airflow
       - AIRFLOW__WEBSERVER__SECRET_KEY=supersecretkey
     volumes:
       - ./dags:/opt/airflow/dags
     command: airflow celery worker --queue gold
+    networks:
+      - lakehouse-net
 
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
@@ -227,10 +290,15 @@ services:
   prometheus:
     image: prom/prometheus:latest
     container_name: prometheus
+    restart: always
     volumes:
       - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
     ports:
       - "9090:9090"
     networks:
@@ -239,15 +307,19 @@ services:
   grafana:
     image: grafana/grafana:latest
     container_name: grafana
+    restart: always
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
     ports:
       - "3000:3000"
     volumes:
       - grafana-data:/var/lib/grafana
+      - ./infra/monitoring/grafana/provisioning:/etc/grafana/provisioning
     depends_on:
       - prometheus
+      - loki
     networks:
       - lakehouse-net
 
@@ -267,8 +339,12 @@ services:
   loki:
     image: grafana/loki:2.9.0
     container_name: loki
+    restart: always
     ports:
       - "3100:3100"
+    volumes:
+      - loki-data:/loki
+      - ./infra/monitoring/loki-config.yaml:/etc/loki/local-config.yaml
     command: -config.file=/etc/loki/local-config.yaml
     networks:
       - lakehouse-net
@@ -276,11 +352,14 @@ services:
   promtail:
     image: grafana/promtail:2.9.0
     container_name: promtail
+    restart: always
     volumes:
-      - /var/log:/var/log
+      - /var/log:/var/log:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
-      - /etc/promtail:/etc/promtail
+      - ./infra/monitoring/promtail-config.yaml:/etc/promtail/promtail-config.yaml
     command: -config.file=/etc/promtail/promtail-config.yaml
+    depends_on:
+      - loki
     networks:
       - lakehouse-net
 
@@ -309,9 +388,12 @@ services:
       - lakehouse-net
 
 volumes:
+  postgres-data:
   cassandradata:
   miniodata:
   grafana-data:
+  prometheus-data:
+  loki-data:
 
 networks:
   lakehouse-net:
